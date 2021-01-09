@@ -169,4 +169,43 @@ def create_hb_constant_schedule(_name, _type_limit='Fractional'):
     return schedule
 
 
- 
+def langDict(self):
+    #nested dict for multi-language PHPP interop
+    
+    self.langDict = {
+        'Instructions':{'English': 'Instructions', 'German': 'Anleitung'},
+        'Verification':{'English': 'Verification', 'German': 'Nachweis'},
+        'Check': {'English': 'Check', 'German': 'Kontrolle'},
+        'Climate': {'English': 'Climate', 'German': 'Klima'},
+        'U-Values': {'English': 'U-Values', 'German': 'U-Werte'},
+        'Areas': {'English': 'Areas', 'German': 'Flächen'},
+        'Ground': {'English': 'Ground', 'German': 'Erdreich'},
+        'Components': {'English': 'Components', 'German': 'Komponenten'},
+        'Windows': {'English': 'Windows', 'German': 'Fenster'},
+        'Shading': {'English': 'Shading', 'German': 'Verschattung'},
+        'Ventilation': {'English': 'Ventilation', 'German': 'Lüftung'},
+        'Additional Vent': {'English': 'Additional Vent', 'German': 'Zusatz Lüftg.'},
+        'Annual heating': {'English': 'Annual heating', 'German': 'HeizJahr'},
+        'Heating': {'English': 'Heating', 'German': 'Heizung'},
+        'Heating Load': {'English': 'Heating Load', 'German': 'Heizlast'},
+        'SummVent': {'English': 'SummVent', 'German': 'SommLuft'},
+        'Summer': {'English': 'Summer', 'German': 'Sommer'},
+        'Cooling': {'English': 'Cooling', 'German': 'Kühlung'},
+        'Cooling units': {'English': 'Cooling units', 'German':'Kühlgeräte'},
+        'Cooling load': {'English': 'Cooling load', 'German': 'Küllast'},
+        'DHW+Distribution': {'English': 'DHW+Distribution', 'German': 'WW+Verteil'},
+        'SolarDHW': {'English': 'SolarDHW', 'German': 'SolarWW'},
+        'PV': {'English': 'PV', 'German': 'PV'},
+        'Electricity': {'English': 'Electricity', 'German': 'Strom'},
+        'Use non-res': {'English': 'Use non-res', 'German': 'Nutz NiWo'},
+        'Electricity non-res': {'English': 'Electricity non-res', 'German': 'Strom NiWo'},
+        'Aux Electricity': {'English': 'Aux Electricity', 'German': 'Hilfsstrom'},
+        'IHG': {'English': 'IHG', 'German': 'IWQ'},
+        'IHG non-res': {'English': 'IHG non-res', 'German': 'IWQ NiWo'},
+        'PER': {'English': 'PER', 'German': 'PER'},
+        'Compact': {'English': 'Compact', 'German': 'Kompakt'},
+        'HP': {'English': 'HP', 'German': 'WP'},
+        'HP Ground': {'English': 'HP Ground', 'German': 'WP Erde'},
+        'Boiler': {'English': 'Boiler', 'German': 'Kessel'},
+        'District heating': {'English': 'District heating', 'German': 'Fernwärme'},
+        'Data': {'English': 'Data', 'German': 'Daten'}}
