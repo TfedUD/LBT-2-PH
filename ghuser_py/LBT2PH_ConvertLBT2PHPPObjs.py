@@ -21,7 +21,7 @@
 #
 """
 -
-EM Nov. 21, 2020
+EM December 23, 2020
     Args:
         north_: <Optional :float :vector> A number between -360 and 360 for the counterclockwise or a vector pointing 'north'
             difference between the North and the positive Y-axis in degrees.
@@ -44,6 +44,9 @@ EM Nov. 21, 2020
             -  Electricity non-res, Lighting: ## (Default= 19)
             -  Electricity non-res, Office Equip: ## (Default=62)
             -  Electricity non-res, Kitchen: ## (Default=77)
+        estimated_tfa_: <bool> Set True to have this component try and estimate the TFA based on the gross floor area of the Honeybee Zones/ surfaces. Leave False or blank to have it try and read TFA info from the PHPP Rooms / Rhino Scene.
+        variants_: Input for the 'Variants' component. Used to configure the Variants worksheet if you are using that functionality. 
+        ud_custom_: Input one or more 'UD XL Obj' items here to write custom values anywhere in the workbook. Be careful with this as you can break the PHPP by accident. For experienced users only.
     Returns:
         footprint_: Preview of the 'footprint' found based on the input geometry. This is used for PER evaluation in the PHPP.
         excel_objects_: Excel obejcts which are ready to wrtite out to the PHPP file. Connect these tothe 'Wrtie XL Workbook' component.
@@ -51,7 +54,7 @@ EM Nov. 21, 2020
 
 ghenv.Component.Name = "LBT2PH_ConvertLBT2PHPPObjs"
 ghenv.Component.NickName = "LBT-->PHPP"
-ghenv.Component.Message = 'NOV_21_2020'
+ghenv.Component.Message = 'DEC_23_2020'
 ghenv.Component.IconDisplayMode = ghenv.Component.IconDisplayMode.application
 ghenv.Component.Category = "PH-Tools"
 ghenv.Component.SubCategory = "02 | LBT2PHPP"
@@ -59,6 +62,7 @@ ghenv.Component.SubCategory = "02 | LBT2PHPP"
 from System import Object
 from Grasshopper import DataTree
 from Grasshopper.Kernel.Data import GH_Path
+import Grasshopper.Kernel as ghK
 
 import LBT2PH
 import LBT2PH.lbt_to_phpp
@@ -72,53 +76,56 @@ excel_objects_ = DataTree[Object]()
 
 #-------------------------------------------------------------------------------
 # Get all the info from the LBT Model
-if _model:
-    materials_opaque        = LBT2PH.lbt_to_phpp.get_opaque_materials_from_model(_model, ghenv)
-    constructions_opaque    = LBT2PH.lbt_to_phpp.get_opaque_constructions_from_model(_model, ghenv)
-    surfaces_opaque         = LBT2PH.lbt_to_phpp.get_exposed_surfaces_from_model(_model, LBT2PH.lbt_to_phpp._find_north(north_), ghenv)
+if _HB_model:
+    print('- '*25)
+    materials_opaque        = LBT2PH.lbt_to_phpp.get_opaque_materials_from_model(_HB_model, ghenv)
+    constructions_opaque    = LBT2PH.lbt_to_phpp.get_opaque_constructions_from_model(_HB_model, ghenv)
+    surfaces_opaque         = LBT2PH.lbt_to_phpp.get_exposed_surfaces_from_model(_HB_model, LBT2PH.lbt_to_phpp._find_north(north_), ghenv)
     
-    materials_windows       = LBT2PH.lbt_to_phpp.get_aperture_materials_from_model(_model)
-    constructions_windows   = LBT2PH.lbt_to_phpp.get_aperture_constructions_from_model(_model)
-    surfaces_windows        = LBT2PH.lbt_to_phpp.get_aperture_surfaces_from_model(_model, ghdoc)
+    materials_windows       = LBT2PH.lbt_to_phpp.get_aperture_materials_from_model(_HB_model)
+    constructions_windows   = LBT2PH.lbt_to_phpp.get_aperture_constructions_from_model(_HB_model)
+    surfaces_windows        = LBT2PH.lbt_to_phpp.get_aperture_surfaces_from_model(_HB_model, ghdoc)
+    hb_rooms                = LBT2PH.lbt_to_phpp.get_zones_from_model(_HB_model)
+    phpp_spaces             = LBT2PH.lbt_to_phpp.get_spaces_from_model(_HB_model, ghdoc)
+    ventilation_system      = LBT2PH.lbt_to_phpp.get_ventilation_systems_from_model(_HB_model, ghenv)
     
-    hb_rooms                = LBT2PH.lbt_to_phpp.get_zones_from_model(_model)
-    phpp_spaces             = LBT2PH.lbt_to_phpp.get_spaces_from_model(_model, ghdoc)
-    ventilation_system      = LBT2PH.lbt_to_phpp.get_ventilation_systems_from_model(_model, ghenv)
-    ground_objs             = LBT2PH.lbt_to_phpp.get_ground_from_model(_model, ghenv)
-    thermal_bridges         = LBT2PH.lbt_to_phpp.get_thermal_bridges(_model, ghenv)
+    ground_objs             = LBT2PH.lbt_to_phpp.get_ground_from_model(_HB_model, ghenv)
+    thermal_bridges         = LBT2PH.lbt_to_phpp.get_thermal_bridges(_HB_model, ghenv)
     
-    dhw_systems             = LBT2PH.lbt_to_phpp.get_dhw_systems(_model)
-    appliances              = LBT2PH.lbt_to_phpp.get_appliances(_model)
-    lighting                = LBT2PH.lbt_to_phpp.get_lighting(_model)
-    climate                 = LBT2PH.lbt_to_phpp.get_climate(_model, epw_file_)
+    dhw_systems             = LBT2PH.lbt_to_phpp.get_dhw_systems(_HB_model)
+    appliances              = LBT2PH.lbt_to_phpp.get_appliances(_HB_model)
+    lighting                = LBT2PH.lbt_to_phpp.get_lighting(_HB_model)
+    climate                 = LBT2PH.lbt_to_phpp.get_climate(_HB_model, epw_file_)
     footprint               = LBT2PH.lbt_to_phpp.get_footprint(surfaces_opaque)
     footprint_              = footprint.Footprint_surface
     
-    phpp_settings           = LBT2PH.lbt_to_phpp.get_settings( _model )
-    summer_vent             = LBT2PH.lbt_to_phpp.get_summ_vent( _model )
-    heating_cooling         = LBT2PH.lbt_to_phpp.get_heating_cooling( _model )
-    per                     = LBT2PH.lbt_to_phpp.get_PER( _model )
+    phpp_settings           = LBT2PH.lbt_to_phpp.get_settings( _HB_model )
+    summer_vent             = LBT2PH.lbt_to_phpp.get_summ_vent( _HB_model )
+    heating_cooling         = LBT2PH.lbt_to_phpp.get_heating_cooling( _HB_model )
+    per                     = LBT2PH.lbt_to_phpp.get_PER( _HB_model )
+    occupancy               = LBT2PH.lbt_to_phpp.get_occupancy( _HB_model )
     
     #---------------------------------------------------------------------------
     # Sort out the inputs
+    print('- '*25)
     hb_room_names = LBT2PH.to_excel.include_rooms( hb_rooms, rooms_included_, rooms_excluded_, ghenv)
     start_row_dict = LBT2PH.to_excel.start_rows( ud_row_starts_, ghenv )
     
-    
     #---------------------------------------------------------------------------
     # Create Xl Objects
+    print('- '*25)
     uValuesList, uValueUID_Names     = LBT2PH.to_excel.build_u_values( constructions_opaque, materials_opaque )
     winComponentsList                = LBT2PH.to_excel.build_components( surfaces_windows )
     areasList, surfacesIncluded      = LBT2PH.to_excel.build_areas( surfaces_opaque, hb_room_names, uValueUID_Names )
     tb_List                          = LBT2PH.to_excel.build_thermal_bridges( thermal_bridges, start_row_dict)
     winSurfacesList                  = LBT2PH.to_excel.build_windows( surfaces_windows, surfacesIncluded, surfaces_opaque )   
     shadingList                      = LBT2PH.to_excel.build_shading( surfaces_windows, surfacesIncluded )
-    tfa                              = LBT2PH.to_excel.build_TFA (phpp_spaces, hb_room_names)
+    tfa                              = LBT2PH.to_excel.build_TFA (phpp_spaces, hb_room_names, estimated_tfa_, _HB_model)
     addnlVentRooms, ventUnitsUsed    = LBT2PH.to_excel.build_addnl_vent_rooms( phpp_spaces, ventilation_system, hb_room_names, start_row_dict )
     vent                             = LBT2PH.to_excel.build_addnl_vent_systems( ventilation_system, ventUnitsUsed, start_row_dict )
     airtightness                     = LBT2PH.to_excel.build_infiltration( hb_rooms, hb_room_names)
     ground                           = LBT2PH.to_excel.build_ground( ground_objs, hb_room_names, ghenv )
-    dhw                              = LBT2PH.to_excel.build_DHW_system( dhw_systems, hb_room_names )
+    dhw                              = LBT2PH.to_excel.build_DHW_system( dhw_systems, hb_room_names, ghenv )
     nonRes_Elec                      = LBT2PH.to_excel.build_non_res_space_info( phpp_spaces, hb_room_names, start_row_dict )
     location                         = LBT2PH.to_excel.build_location( climate )
     elec_equip_appliance             = LBT2PH.to_excel.build_appliances( appliances, hb_room_names, ghenv )
@@ -127,22 +134,25 @@ if _model:
     settings                         = LBT2PH.to_excel.build_settings( phpp_settings )
     summer_vent                      = LBT2PH.to_excel.build_summ_vent( summer_vent )
     heating_cooling                  = LBT2PH.to_excel.build_heating_cooling( heating_cooling, hb_room_names )
-    per                              = LBT2PH.to_excel.build_PER( per, hb_room_names )
+    per                              = LBT2PH.to_excel.build_PER( per, hb_room_names, ghenv )
+    occupancy                        = LBT2PH.to_excel.build_occupancy( occupancy )
+    variants                         = LBT2PH.to_excel.build_variants( variants_ )
+    ud_custom                        = LBT2PH.to_excel.build_ud_custom( ud_custom_ )
     
     #---------------------------------------------------------------------------
     # Add all the Excel-Ready Objects to a master Tree for outputting / passing
     excel_objects_.AddRange(uValuesList, GH_Path(0))
-    excel_objects_.AddRange(winComponentsList, GH_Path(1)) 
+    excel_objects_.AddRange(winComponentsList, GH_Path(1))
     excel_objects_.AddRange(areasList, GH_Path(2))
     excel_objects_.AddRange(winSurfacesList, GH_Path(3))
     excel_objects_.AddRange(shadingList, GH_Path(4))
     excel_objects_.AddRange(tfa, GH_Path(5))
     excel_objects_.AddRange(tb_List, GH_Path(6))
     excel_objects_.AddRange(addnlVentRooms, GH_Path(7))
-    excel_objects_.AddRange(vent, GH_Path(8))  
-    excel_objects_.AddRange(airtightness, GH_Path(9))  
-    excel_objects_.AddRange(ground, GH_Path(10)) 
-    excel_objects_.AddRange(dhw, GH_Path(11)) 
+    excel_objects_.AddRange(vent, GH_Path(8))
+    excel_objects_.AddRange(airtightness, GH_Path(9))
+    excel_objects_.AddRange(ground, GH_Path(10))
+    excel_objects_.AddRange(dhw, GH_Path(11))
     excel_objects_.AddRange(nonRes_Elec, GH_Path(12))
     excel_objects_.AddRange(location, GH_Path(13))
     excel_objects_.AddRange(elec_equip_appliance, GH_Path(14))
@@ -152,6 +162,11 @@ if _model:
     excel_objects_.AddRange(summer_vent, GH_Path(18))
     excel_objects_.AddRange(heating_cooling, GH_Path(19))
     excel_objects_.AddRange(per, GH_Path(20))
+    excel_objects_.AddRange(occupancy, GH_Path(21))
+    excel_objects_.AddRange(variants, GH_Path(22))
+    
+    # Make sure this always at the end so it overwrites anything else
+    excel_objects_.AddRange(ud_custom, GH_Path(excel_objects_.BranchCount+1))
     
     #---------------------------------------------------------------------------
     # Give Warnings

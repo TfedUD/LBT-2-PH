@@ -22,21 +22,23 @@
 """
 Will create geometry for the window 'reveals' (the sides, top and bottom for windows which are installed in a host surface). These are used to accurately calcualte the window shading factors. Will also generate 'punched' envelope surface geometry to allow for accurate shading assessment.
 -
-EM November 21, 2020
+EM December 9, 2020
     Args:
-        _HBZones: (list) The Honeybee Zones for analysis
-        moveWindows_: (bool) True = will move the window surfaces based on their 'InstallDepth' parameter. Use this if you want to push the windows 'in' to the host surface for the shading calculations. False = will not move the window surfaces.
+        _HB_rooms: (list) The Honeybee-Rooms to use.
     Returns:
-        HBZones_: The updated Honeybee Zone objects to pass along to the next step.
-        windowNames_: A list of the window names in the order calculated.
-        windowSurfaces_: The window surfaces in the same order as the "windowNames_" output. If "moveWindows_" is set to True, these surfaces will be pushed 'in' according to their 'InstallDepth' parameter and surface normal.
-        windowSurrounds_: (Tree) Each branch represents one window object. The surfaces in each branch correspond to the Bottom, Left, Top and Right 'reveal' surfaces. Use this to calculate the shading factors for the window surface.
-        envelopSrfcs: The Honeybee zone surfaces, except with all the windows 'punched' out. 
+        HB_rooms_: A copy of the Honeybee-Rooms input.
+        
+        window_names_: A list of the window names in the order calculated.
+        window_surfaces_: The window surfaces in the same order as the "window_names_" output. These surfaces will be pushed 'in' according to their 'InstallDepth' parameter and surface normal. If you are getting weird results, double check all your window surface normals are pointing 'out'.
+        
+        window_surrounds_: (Tree) Each branch represents one window object. The surfaces in each branch correspond to the Bottom, Left, Top and Right 'reveal' surfaces (in that order). These surfaces can be useful to calculate the shading factors for the window surface.
+        envelope_surfaces_punched: The Honeybee-Room evelope surfaces, except with all the windows 'punched' out. This is useful for calculating shading factors on the inset window surfaces.
+        envelope_surfaces_: The Honeybee Room exterior/envelope surfaces.
 """
 
 ghenv.Component.Name = "LBT2PH_CreateWindowReveals"
 ghenv.Component.NickName = "Create Window Reveals"
-ghenv.Component.Message = 'NOV_21_2020'
+ghenv.Component.Message = 'DEC_9_2020'
 ghenv.Component.IconDisplayMode = ghenv.Component.IconDisplayMode.application
 ghenv.Component.Category = "PH-Tools"
 ghenv.Component.SubCategory = "01 | Model"
@@ -64,7 +66,10 @@ for hb_room in _HB_rooms:
     for face in hb_room.faces:
         # ----------------------------------------------------------------------
         # Envelope Surfaces for shading
-        envelope_surfaces_punched.append( from_face3d(face.punched_geometry) )
+        #Note, pass along the name so that later, if there is a problem it can be ID'd
+        rh_geom = from_face3d(face.punched_geometry)
+        rh_geom.SetUserString('display_name', face.display_name)
+        envelope_surfaces_punched.append( rh_geom )
         envelope_surfaces_.append( from_face3d(face.geometry) )
         
         # ----------------------------------------------------------------------
@@ -76,7 +81,9 @@ for hb_room in _HB_rooms:
             name = aperture.display_name
             try:
                 phpp_window = LBT2PH.windows.PHPP_Window.from_dict( aperture.user_data['phpp'] )
+                
                 window_surrounds_.AddRange( phpp_window.reveal_geometry, GH_Path(count)  )
+                
                 window_surfaces_.append( phpp_window.inset_window_surface )
                 window_names_.append( name )
                 count += 1

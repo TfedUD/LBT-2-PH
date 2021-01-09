@@ -6,13 +6,17 @@ import re
 import random
 import scriptcontext as sc
 from System import Object
+from collections import namedtuple
 
 from honeybee_energy.schedule.ruleset import ScheduleRuleset
 from honeybee_energy.lib.schedules import schedule_by_identifier
 from ladybug.dt import Date
+
 import LBT2PH
 import LBT2PH.helpers
 
+reload( LBT2PH )
+reload( LBT2PH.helpers )
 
 class PHPP_Sys_Duct(Object):
     def __init__(self, _duct_input=[], _wMM=[], _iThckMM=[], _iLambda=[], _ghdoc=[]):
@@ -219,6 +223,8 @@ class PHPP_Sys_Duct(Object):
                 self._insulation_thickness,
                 self._insulation_lambda,
                 self._ghdoc)
+    def ToString(self):
+        return str(self)
 
 
 class PHPP_Sys_VentUnit(Object):
@@ -361,6 +367,8 @@ class PHPP_Sys_VentUnit(Object):
                 self.elec_eff,
                 self.frost_temp,
                 self.exterior)
+    def ToString(self):
+        return str(self)
 
 
 class PHPP_Sys_ExhaustVent(Object):
@@ -438,6 +446,7 @@ class PHPP_Sys_ExhaustVent(Object):
 
     def to_dict(self):
         d = {}
+        
         d.update( { 'id':self.id} )
         d.update( { '_name':self.name } )
         d.update( { 'vent_floor_area':self.vent_floor_area } )
@@ -484,6 +493,8 @@ class PHPP_Sys_ExhaustVent(Object):
                self.hours_per_day_on,
                self.days_per_week_on,
                self.duct_01)
+    def ToString(self):
+        return str(self)
 
 
 class PHPP_Sys_VentSchedule(Object):
@@ -528,28 +539,28 @@ class PHPP_Sys_VentSchedule(Object):
     def __repr__(self):
         return "{}( s_h={!r}, t_h={!r}, s_m={!r}, t_m={!r}, s_l={!r}, t_l={!r})".format(
                 self.__class__.__name__,
-                self.id,
                 self._speed_high,
                 self._time_high,
                 self._speed_med,
                 self._time_med,
                 self._speed_low,
                 self._time_low)
+    def ToString(self):
+        return str(self)
 
 
 class PHPP_Sys_Ventilation(Object):
     def __init__(self,
                 _ghenv=None,
-                _system_id=random.randint(1000,9999),
                 _system_type='1-Balanced PH ventilation with HR',
                 _systemName='Vent-1',
                 _unit=PHPP_Sys_VentUnit(),
                 _d01=PHPP_Sys_Duct(),
                 _d02=PHPP_Sys_Duct(),
-                _exhaustObjs=[ PHPP_Sys_ExhaustVent() ]):
+                _exhaustObjs=[]):
         
+        self.system_id = random.randint(1000,9999)
         self.ghenv = _ghenv
-        self.system_id = _system_id
         self.system_type = _system_type
         self.system_name = _systemName
         self.vent_unit = _unit
@@ -577,7 +588,7 @@ class PHPP_Sys_Ventilation(Object):
             pass
 
     def __eq__(self, other):
-        return self.id == other.id
+        return self.system_id == other.system_id
     
     def __hash__(self):
         return hash(str(self.system_id))
@@ -605,26 +616,29 @@ class PHPP_Sys_Ventilation(Object):
         d.update( {'vent_unit':self.vent_unit.to_dict()} )
         d.update( {'duct_01': self.duct_01.to_dict()} )
         d.update( {'duct_02': self.duct_02.to_dict()} )
-        d.update( {'exhaust_vent_objs': [exhaust_obj.to_dict() for exhaust_obj in self.exhaust_vent_objs] } )
+        if self.exhaust_vent_objs:
+            d.update( {'exhaust_vent_objs': [exhaust_obj.to_dict() for exhaust_obj in self.exhaust_vent_objs] } )
 
         return d
 
     @classmethod
     def from_dict(cls, _dict, _ghenv=None):
 
-        system_id = _dict['system_id']
-        system_type = _dict['system_type']
-        system_name = _dict['system_name']
-        unit = PHPP_Sys_VentUnit.from_dict(_dict['vent_unit'] )
-        duct_01 = PHPP_Sys_Duct.from_dict( _dict['duct_01'] )
-        duct_02 = PHPP_Sys_Duct.from_dict( _dict['duct_02'] )
-        exhaust_systems = []
-        for exhaust_system_dict in _dict['exhaust_vent_objs']:
-            exhaust_systems.append( PHPP_Sys_ExhaustVent.from_dict(exhaust_system_dict) )
+        exhaust_objs = []
+        for exhaust_system_dict in _dict.get('exhaust_vent_objs', []):
+            exhaust_objs.append( PHPP_Sys_ExhaustVent.from_dict(exhaust_system_dict) )
 
-        new_vent_system = cls(_ghenv, system_id, system_type, system_name, unit, duct_01, duct_02, exhaust_systems)
+        new_obj = cls()
+        new_obj.ghenv = _ghenv
+        new_obj.system_id = _dict.get('system_id')
+        new_obj.system_type = _dict.get('system_type')
+        new_obj.system_name = _dict.get('system_name')
+        new_obj.vent_unit = PHPP_Sys_VentUnit.from_dict(_dict.get('vent_unit') )
+        new_obj.duct_01 = PHPP_Sys_Duct.from_dict( _dict.get('duct_01') )
+        new_obj.duct_02 = PHPP_Sys_Duct.from_dict( _dict.get('duct_02') )
+        new_obj.exhaust_vent_objs = exhaust_objs
         
-        return new_vent_system
+        return new_obj
 
     def __str__(self):
         return unicode(self).encode('utf-8')
@@ -641,61 +655,108 @@ class PHPP_Sys_Ventilation(Object):
                 self.duct_01,
                 self.duct_02,
                 self.exhaust_vent_objs)
+    def ToString(self):
+        return str(self)
 
 
-def calc_hb_room_annual_vent_flow_rate(_hb_room, _ghenv):
+def calc_room_vent_rates_from_HB(_hb_room, _ghenv):
     ''' Uses the EP Loads and Schedules to calc the HB Room's annual flowrate '''
 
-    #print dir(_hb_room)
-    #print _hb_room.properties.energy.people.occupancy_schedule.display_name
-    #print dir(_hb_room.properties.energy.people)
-    #print _hb_room.properties.energy.ventilation
-    #print dir(_hb_room.properties.energy.ventilation)
-
-    #---------------------------------------------------------------------------
     # Guard
+    #---------------------------------------------------------------------------
     if _hb_room.floor_area == 0:
         warning =   "Something wrong with the floor area - are you sure\n"\
                     "there is at least one 'Floor' surface making up the Room?"
         _ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, warning)
         return None
 
-    #---------------------------------------------------------------------------
-    # Pull the Ventilation Loads, Occupancy, and Schedule from HB Room
+
+    # Pull the Loads from HB Room
+    # ---------------------------------------------------------------------------
     vent_flow_per_area = _hb_room.properties.energy.ventilation.flow_per_area
     vent_flow_per_person = _hb_room.properties.energy.ventilation.flow_per_person
+    vent_flow_per_zone = _hb_room.properties.energy.ventilation.flow_per_zone
+    vent_flow_ach = _hb_room.properties.energy.ventilation.air_changes_per_hour
     people_per_area = _hb_room.properties.energy.people.people_per_area
+    
+
+    # Pull the Schedules from HB Room
+    #---------------------------------------------------------------------------
+    week_start_day = 'Sunday'
+    holidays = None
+    start_date, end_date, timestep = Date(1, 1), Date(12, 31), 1
+
+    hb_sched_occ = _hb_room.properties.energy.people.occupancy_schedule
+    hb_sched_vent = _hb_room.properties.energy.ventilation.schedule
+
+    if hb_sched_occ:
+        hb_sched_occ = schedule_by_identifier(hb_sched_occ.identifier)
+        
+        if isinstance(hb_sched_occ, ScheduleRuleset):
+            data_occ = hb_sched_occ.data_collection(
+                timestep, start_date, end_date, week_start_day, holidays, leap_year=False)
+    else:
+        data_occ = (1 for i in range(8760))
+
+    if hb_sched_vent:
+        hb_sched_vent = schedule_by_identifier(hb_sched_vent.identifier) 
+
+        if isinstance(hb_sched_vent, ScheduleRuleset):
+            data_vent = hb_sched_vent.data_collection(
+                timestep, start_date, end_date, week_start_day, holidays, leap_year=False)
+    else:
+        data_vent = (1 for i in range(8760))
 
     #---------------------------------------------------------------------------
-    # Calc hourly flow rates (m3/h) based on the HB/EP Schedule values
+    # Nominal (peak) flow rates (m3/h) based on the HB/EP Load values
     # m3/s---> m3/h
-    room_vent_by_area = [vent_flow_per_area * _hb_room.floor_area * 60 * 60] * 8760
     
-    room_vent_by_area_AVG = sum(room_vent_by_area) / len(room_vent_by_area)
-    room_vent_by_people_AVG = people_per_area * _hb_room.floor_area * vent_flow_per_person * 60 * 60
-    room_vent_total_AVG = room_vent_by_area_AVG + room_vent_by_people_AVG
+    nom_vent_flow_per_area = vent_flow_per_area * _hb_room.floor_area * 60.0 * 60.0
+    nom_vent_flow_per_zone = vent_flow_per_zone * 60.0 * 60.0
+    nom_vent_flow_ach = vent_flow_ach * _hb_room.volume
+    nom_vent_flow_per_person = people_per_area * _hb_room.floor_area * vent_flow_per_person * 60.0 * 60.0
+
+    nom_vent_flow_total = nom_vent_flow_per_area + nom_vent_flow_per_person + nom_vent_flow_per_zone + nom_vent_flow_ach
     
     #---------------------------------------------------------------------------
     # Preview results
     print("The HB Room: '{}' has an average annual airflow of: {:.2f} "\
-        "m3/h".format(_hb_room.display_name, room_vent_total_AVG) )
+        "m3/h".format(_hb_room.display_name, nom_vent_flow_total) )
     print(">Looking at the Honeybee Program parameters:" )
     print("   *Note: These are the values BEFORE any occupany / activity schedule"\
         "is applied to reduce this (demand control)" )
-    print("   *Note: These are the values takes into account the airflow for 'areas' and the airflow for people." )
+    print("   *Note: These are the values takes into account the airflow for 'areas', for people, per zone and by ACH." )
     print("   Details:")
     print("      >Reference HB-Room Floor Area used is: {:.2f} m2".format(float(_hb_room.floor_area)) )
-    print("      >[Ventilation Per Pers: {:.6f} m3/s-prs] x [Floor Area: {:.2f} m2] x [{:.2f} ppl/m2] "\
-        "* 3600 s/hr = {:.2f} m3/hr".format(vent_flow_per_person, _hb_room.floor_area,
-        vent_flow_per_person*3600, room_vent_by_people_AVG) )
+    print("      >Reference HB-Room Volume used is: {:.2f} m3".format(float(_hb_room.volume)) )
+    print("      >[Ventilation Per Pers: {:.6f} m3/s-prs] x [Floor Area: {:.2f} m2] x [{:.3f} ppl/m2] "\
+        "x 3600 s/hr = {:.2f} m3/hr".format(vent_flow_per_person, _hb_room.floor_area,
+        people_per_area, nom_vent_flow_per_person) )
     print("      >[Ventilation Per Area: {:.6f} m3/s-m2] x [Floor Area: {:.2f} m2] "\
-        "* 3600 s/hr = {:.2f} m3/hr".format(float(vent_flow_per_area),
-        float(_hb_room.floor_area), float(room_vent_by_area_AVG)) )
-    print("      >[Vent For Area: {:.2f} m3/h] + [Vent For PPL: {:.2f} m3/h] ="\
-        " {:.2f} m3/h".format(room_vent_by_area_AVG, vent_flow_per_person, room_vent_total_AVG) )
-    print('- '*50)
+        "x 3600 s/hr = {:.2f} m3/hr".format(float(vent_flow_per_area),
+        float(_hb_room.floor_area), float(nom_vent_flow_per_area)) )
+    print("      >[Ventilation per Zone: {:.6f} m3/s] x 3600 s/hr = "\
+        "{:.2f} m3/h".format(vent_flow_per_zone, nom_vent_flow_per_zone, ) )
+    print("      >[Ventilation by ACH: {:.2f} ACH] x [Volume: {:.2f} m3]"\
+        " = {:.2f} m3/h ".format(vent_flow_ach, _hb_room.volume, nom_vent_flow_ach) )
+    print("      >[Vent For Area: {:.2f} m3/h] + [Vent For PPL: {:.2f} m3/h]"\
+        " + [Vent For Zone: {:.2f} m3/h] + [Vent For ACH: {:.2f} m3/h]"\
+        " = {:.2f} m3/h".format(nom_vent_flow_per_area, vent_flow_per_person, 
+        nom_vent_flow_per_zone, nom_vent_flow_ach, nom_vent_flow_total) )
+    print('- '*100)
     
-    return room_vent_total_AVG
+
+    # Annual Average flow rates taking schedules into account
+    #---------------------------------------------------------------------------
+    total_nom_vent_flow = nom_vent_flow_per_area + nom_vent_flow_per_zone + nom_vent_flow_ach
+    annual_vent_flow_space = sum( total_nom_vent_flow * val for val in data_vent )/8760
+    annual_vent_flow_ppl = sum( nom_vent_flow_per_person * val for val in data_occ )/8760
+    annual_vent_flow_total = annual_vent_flow_space + annual_vent_flow_ppl
+
+    Output = namedtuple('Output', ['nominal', 'annual_avg'])
+    output = Output( nom_vent_flow_total, annual_vent_flow_total  )
+
+    return output
 
 def hb_schedule_to_data(_schedule_name):
         try:
@@ -712,12 +773,12 @@ def hb_schedule_to_data(_schedule_name):
 
         return data
 
-def calc_space_vent_flow_rates(_space, _hb_room, _hb_room_tfa, _hb_room_avg_vent_rate, _type, _ghenv):
-    if _type != 'EP':
-        return None
+def calc_space_vent_rates(_space, _hb_room, _hb_room_tfa, _hb_room_peak_vent_rate, _ghenv):
+    """Determine the Vent flowrate (m3/h) for each PHPP Room based on the EP/HB Values"""
 
     #---------------------------------------------------------------------------
     # Guard
+    
     if _hb_room.floor_area == 0:
         warning =   "Something wrong with the floor area - are you sure\n"\
                     "there is at least one 'Floor' surface making up the Room?"
@@ -732,7 +793,7 @@ def calc_space_vent_flow_rates(_space, _hb_room, _hb_room_tfa, _hb_room_avg_vent
 
     #---------------------------------------------------------------------------
     percent_of_total_zone_TFA = _space.space_tfa / _hb_room_tfa
-    room_air_flow = percent_of_total_zone_TFA * _hb_room_avg_vent_rate
+    room_air_flow = percent_of_total_zone_TFA * _hb_room_peak_vent_rate
     room_air_flow = room_air_flow/2  # Div by 2 cus' half goes to supply, half to extract?
 
     return { 'V_sup': room_air_flow, 'V_eta': room_air_flow, 'V_trans': room_air_flow }

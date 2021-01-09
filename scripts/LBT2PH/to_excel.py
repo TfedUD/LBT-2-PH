@@ -1,8 +1,9 @@
-from System import Object
+import statistics
+
+import Grasshopper.Kernel as ghK
 from Grasshopper import DataTree
 from Grasshopper.Kernel.Data import GH_Path
-import Grasshopper.Kernel as ghK
-import statistics
+from System import Object
 
 import LBT2PH
 import LBT2PH.dhw
@@ -156,94 +157,71 @@ def start_rows( _udIn, _ghenv ):
     else:
         return default_start_rows
 
-def build_u_values(_inputBranch, _branch_materials):
+def build_u_values(_constructions_opaque, _materials_opaque):
+    def is_window( _opaque_material_names, _const ):
+        # Check if any of the materials are NOT in the opaque mat list
+        layer_names = (layer.layer_name for layer in _const.Layers)
+        
+        for layer_name in layer_names:
+            if layer_name not in _opaque_material_names:
+                return True
+        
+        return False
+    
     uID_Count = 1
-    uValueUID_Names = []
+    uValueUID_Names = {}
     uValuesConstructorStartRow = 10
     uValuesList = []
+
+    # Get all the Opaque Construction Material Names
+    opaque_material_names = set(mat.hb_display_name for mat in _materials_opaque.values())
+
     print('Creating the U-Values Objects...')
-    for eachConst in _inputBranch:
-        # for each Construction Assembly in the model....
+    for eachConst in _constructions_opaque:
+        #-----------------------------------------------------------------------
+        if is_window(opaque_material_names, eachConst):
+            continue
+
+        # Create the list of User-ID Constructions to match PHPP
+        uValueUID_Names[eachConst.hb_display_name] = '{:02d}ud-{}'.format(uID_Count, eachConst.phpp_name)
         
-        # Get the Construction's Name and the Materal Layers in the EP Model
-        construcionNameEP = getattr(eachConst, 'Name')
-        layers = sorted(getattr(eachConst, 'Layers'))
-        intInsuFlag = eachConst.IntInsul if eachConst.IntInsul != None else ''
+        # Create the Objects for the Header Piece (Name, Rsi, Rse)
+        nameAddress = '{}{}'.format('M', uValuesConstructorStartRow + 1) # Construction Name
+        rSi = '{}{}'.format('M', uValuesConstructorStartRow + 3) # R-surface-int
+        rSe = '{}{}'.format('M', uValuesConstructorStartRow + 4) # R-surface-ext
+        intIns = '{}{}'.format('S', uValuesConstructorStartRow + 1) # Interior Insulation Flag
         
-        # Filter out any of the Window Constructions
-        isWindow = False
-        opaqueMaterialNames = []
-        for eachMat in _branch_materials:
-            opaqueMaterialNames.append(eachMat.name) # Get all the Opaque Construction Material Names
+        uValuesList.append( PHPP_XL_Obj('U-Values', nameAddress, eachConst.phpp_name))
+        uValuesList.append( PHPP_XL_Obj('U-Values', rSi, 0, 'M2K/W', 'HR-FT2-F/BTU'))
+        uValuesList.append( PHPP_XL_Obj('U-Values', rSe, 0, 'M2K/W', 'HR-FT2-F/BTU')) # For now, zero out
         
-        # Check if the material matches any of the Opaque ones
-        for eachLayer in layers:
-            if eachLayer[1] in opaqueMaterialNames:
-                eachLayer[1]
-                break
-            else:
-                # If not... it must be a window (maybe?)
-                isWindow = True
+        if eachConst.IntInsul:
+            uValuesList.append( PHPP_XL_Obj('U-Values', intIns, 'x'))
         
-        if isWindow == True:
-            pass
-        else:
-            # Fix the name to remove 'PHPP_CONST_'
-            if 'PHPP_CONST_' in construcionNameEP:
-                constName_clean = construcionNameEP.split('PHPP_CONST_')[1].replace('_', ' ')
-            else:
-                constName_clean = construcionNameEP.replace('_', ' ')
+        # Create the actual Material Layers for PHPP U-Value
+        #-------------------------------------------------------------------
+        layerCount = 0
+        for layer in sorted(eachConst.Layers):
             
-            # Create the list of User-ID Constructions to match PHPP
-            uValueUID_Names.append('{:02d}ud-{}'.format(uID_Count, constName_clean) )
-            
-            # Create the Objects for the Header Piece (Name, Rsi, Rse)
-            nameAddress = '{}{}'.format('M', uValuesConstructorStartRow + 1) # Construction Name
-            rSi = '{}{}'.format('M', uValuesConstructorStartRow + 3) # R-surface-int
-            rSe = '{}{}'.format('M', uValuesConstructorStartRow + 4) # R-surface-ext
-            intIns = '{}{}'.format('S', uValuesConstructorStartRow + 1) # Interior Insulation Flag
-            
-            uValuesList.append( PHPP_XL_Obj('U-Values', nameAddress, constName_clean))
-            uValuesList.append( PHPP_XL_Obj('U-Values', rSi, 0, 'M2K/W', 'HR-FT2-F/BTU'))
-            uValuesList.append( PHPP_XL_Obj('U-Values', rSe, 0, 'M2K/W', 'HR-FT2-F/BTU')) # For now, zero out
-            if eachConst.IntInsul != None:
-                uValuesList.append( PHPP_XL_Obj('U-Values', intIns, 'x'))
-            
-            # Create the actual Material Layers for PHPP U-Value
-            layerCount = 0
-            for layer in layers:
-                # For each layer in the Construction Assembly...
-                for eachMatLayer in  _branch_materials:
-                    # See if the Construction's Layer material name matches one in the Materials list....
-                    # If so, use those parameters from the Material Layer
-                    if layer[1] == eachMatLayer.name:
-                        # Filter out any MASSLAYERs
-                        if layer[1] != 'MASSLAYER':
-                            
-                            # Clean the name
-                            if 'PHPP_MAT_' in layer[1]:
-                                layerMatName = layer[1].split('PHPP_MAT_')[1].replace('_', ' ')
-                            else:
-                                layerMatName = layer[1].replace('_', ' ')
-                            
-                            layerNum = layer[0]
-                            layerMatCond = getattr(eachMatLayer, 'LayerConductivity')
-                            layerThickness = getattr(eachMatLayer, 'LayerThickness')*1000 # Cus PHPP uses mm for thickness
-                            
-                            # Set up the Range tagets
-                            layer1Address_L = '{}{}'.format('L', uValuesConstructorStartRow + 7 + layerCount) # Material Name
-                            layer1Address_M = '{}{}'.format('M', uValuesConstructorStartRow + 7 + layerCount) # Conductivity
-                            layer1Address_S = '{}{}'.format('S', uValuesConstructorStartRow + 7 + layerCount) # Thickness
-                            
-                            # Create the Layer Objects
-                            uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_L, layerMatName))# Material Name
-                            uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_M, layerMatCond, 'W/MK', 'HR-FT2-F/BTU-IN')) # Conductivity
-                            uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_S, layerThickness, 'MM', 'IN')) # Thickness
-                            
-                            layerCount+=1
-            
-            uID_Count += 1
-            uValuesConstructorStartRow += 21
+            if layer.layer_name != 'MASSLAYER':
+                    layer_material = _materials_opaque.get(layer.layer_name)
+                    layerMatCond = layer_material.LayerConductivity
+                    layerThickness = layer_material.LayerThickness * 1000 # Cus PHPP uses mm for thickness
+                    
+                    # Set up the Range tagets
+                    layer1Address_L = '{}{}'.format('L', uValuesConstructorStartRow + 7 + layerCount) # Material Name
+                    layer1Address_M = '{}{}'.format('M', uValuesConstructorStartRow + 7 + layerCount) # Conductivity
+                    layer1Address_S = '{}{}'.format('S', uValuesConstructorStartRow + 7 + layerCount) # Thickness
+                    
+                    # Create the Layer Objects
+                    uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_L, layer_material.phpp_name))# Material Name
+                    uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_M, layerMatCond, 'W/MK', 'HR-FT2-F/BTU-IN')) # Conductivity
+                    uValuesList.append( PHPP_XL_Obj('U-Values', layer1Address_S, layerThickness, 'MM', 'IN')) # Thickness
+                    
+                    layerCount+=1
+        
+        uID_Count += 1
+        uValuesConstructorStartRow += 21
     
     return uValuesList, uValueUID_Names
 
@@ -286,7 +264,7 @@ def build_components(_inputBranch):
         
         # ----------------------------------------------------------------------
         # Frames 
-        fNm = eachWin.frame.display_name
+        fNm = eachWin.frame.name
         uF_L, uF_R, uF_B, uF_T  = eachWin.frame.uLeft, eachWin.frame.uRight, eachWin.frame.uBottom, eachWin.frame.uTop
         wF_L, wF_R, wF_B, wF_T  = eachWin.frame.fLeft, eachWin.frame.fRight, eachWin.frame.fBottom, eachWin.frame.fTop
         psiG_L, psiG_R, psiG_B, psiG_T  = eachWin.frame.psigLeft, eachWin.frame.psigRight, eachWin.frame.psigBottom, eachWin.frame.psigTop
@@ -346,73 +324,63 @@ def build_components(_inputBranch):
     
     return winComponentsList
 
-def build_areas(_inputBranch, _zones, _uValueUID_Names):
+def build_areas(_surfaces, _hb_room_names, _uValueUIDs):
+       
     areasRowStart = 41
     areaCount = 0
     uID_Count = 1
     areasList = []
     surfacesIncluded = []
+    
     print("Creating the 'Areas' Objects...")
-    for surface in _inputBranch:
-        # for each Opaque Surface in the model....
+    for surface in _surfaces:
+        if surface.HostZoneName not in _hb_room_names:
+            continue
+
+        # Get the Surface Parameters
+        nm = surface.Name
+        groupNum = surface.GroupNum
+        quantity = 1
+        surfaceArea = surface.SurfaceArea
+        assemblyName = surface.AssemblyName.replace('_', ' ')  
+        angleFromNorth = surface.AngleFromNorth
+        angleFromHoriz = surface.AngleFromHoriz
+        shading = surface.Factor_Shading
+        abs = surface.Factor_Absorptivity
+        emmis = surface.Factor_Emissivity
+        assemblyName = _uValueUIDs.get( surface.AssemblyName )
         
-        # First, see if the Surface should be included in the output
-        for eachZoneName in _zones:
-            if surface.HostZoneName == eachZoneName:
-                includeSurface = True
-                break
-            else:
-                includeSurface = False
+        # Setup the Excel Address Locations
+        Address_Name = '{}{}'.format('L', areasRowStart + areaCount)
+        Address_GroupNum = '{}{}'.format('M', areasRowStart + areaCount)
+        Address_Quantity = '{}{}'.format('P', areasRowStart + areaCount)
+        Address_Area = '{}{}'.format('V', areasRowStart + areaCount)
+        Address_Assembly = '{}{}'.format('AC', areasRowStart + areaCount)
+        Address_AngleNorth = '{}{}'.format('AG', areasRowStart + areaCount)
+        Address_AngleHoriz = '{}{}'.format('AH', areasRowStart + areaCount)
+        Address_ShadingFac = '{}{}'.format('AJ', areasRowStart + areaCount)
+        Address_Abs = '{}{}'.format('AK', areasRowStart + areaCount)
+        Address_Emmis = '{}{}'.format('AL', areasRowStart + areaCount)
         
-        if includeSurface:
-            # Get the Surface Parameters
-            nm = getattr(surface, 'Name')
-            groupNum = getattr(surface, 'GroupNum')
-            quantity = 1
-            surfaceArea = getattr(surface, 'SurfaceArea')
-            assemblyName = getattr(surface, 'AssemblyName').replace('_', ' ') 
-            angleFromNorth = getattr(surface, 'AngleFromNorth')
-            angleFromHoriz = getattr(surface, 'AngleFromHoriz')
-            shading = getattr(surface, 'Factor_Shading')
-            abs = getattr(surface, 'Factor_Absorptivity')
-            emmis = getattr(surface, 'Factor_Emissivity')
-            
-            # Find the right UID name (with the numeric prefix)
-            for uIDName in _uValueUID_Names:
-                if assemblyName in uIDName[5:] or uIDName[5:] in assemblyName: # compare to slice without prefix
-                    assemblyName = uIDName
-            
-            # Setup the Excel Address Locations
-            Address_Name = '{}{}'.format('L', areasRowStart + areaCount)
-            Address_GroupNum = '{}{}'.format('M', areasRowStart + areaCount)
-            Address_Quantity = '{}{}'.format('P', areasRowStart + areaCount)
-            Address_Area = '{}{}'.format('V', areasRowStart + areaCount)
-            Address_Assembly = '{}{}'.format('AC', areasRowStart + areaCount)
-            Address_AngleNorth = '{}{}'.format('AG', areasRowStart + areaCount)
-            Address_AngleHoriz = '{}{}'.format('AH', areasRowStart + areaCount)
-            Address_ShadingFac = '{}{}'.format('AJ', areasRowStart + areaCount)
-            Address_Abs = '{}{}'.format('AK', areasRowStart + areaCount)
-            Address_Emmis = '{}{}'.format('AL', areasRowStart + areaCount)
-            
-            areasList.append( PHPP_XL_Obj('Areas', Address_Name, nm))# Surface Name
-            areasList.append( PHPP_XL_Obj('Areas', Address_GroupNum, groupNum))# Surface Group Number
-            areasList.append( PHPP_XL_Obj('Areas', Address_Quantity, quantity))# Surface Quantity
-            areasList.append( PHPP_XL_Obj('Areas', Address_Area, surfaceArea, 'M2', 'FT2'))# Surface Area (m2)
-            areasList.append( PHPP_XL_Obj('Areas', Address_Assembly, assemblyName))# Assembly Type Name
-            areasList.append( PHPP_XL_Obj('Areas', Address_AngleNorth, angleFromNorth))# Orientation Off North
-            areasList.append( PHPP_XL_Obj('Areas', Address_AngleHoriz, angleFromHoriz))# Orientation Off Horizontal
-            areasList.append( PHPP_XL_Obj('Areas', Address_ShadingFac, shading))# Shading Factor
-            areasList.append( PHPP_XL_Obj('Areas', Address_Abs, abs))# Absorptivity
-            areasList.append( PHPP_XL_Obj('Areas', Address_Emmis, emmis))# Emmissivity
-            
-            # Add the PHPP UD Surface Name to the Surface Object
-            setattr(surface, 'UD_Srfc_Name', '{:d}-{}'.format(uID_Count, nm) )
-            
-            # Keep track of which Surfaces are included in the output
-            surfacesIncluded.append(nm)
-            
-            uID_Count += 1
-            areaCount += 1
+        areasList.append( PHPP_XL_Obj('Areas', Address_Name, nm))# Surface Name
+        areasList.append( PHPP_XL_Obj('Areas', Address_GroupNum, groupNum))# Surface Group Number
+        areasList.append( PHPP_XL_Obj('Areas', Address_Quantity, quantity))# Surface Quantity
+        areasList.append( PHPP_XL_Obj('Areas', Address_Area, surfaceArea, 'M2', 'FT2'))# Surface Area (m2)
+        areasList.append( PHPP_XL_Obj('Areas', Address_Assembly, assemblyName))# Assembly Type Name
+        areasList.append( PHPP_XL_Obj('Areas', Address_AngleNorth, angleFromNorth))# Orientation Off North
+        areasList.append( PHPP_XL_Obj('Areas', Address_AngleHoriz, angleFromHoriz))# Orientation Off Horizontal
+        areasList.append( PHPP_XL_Obj('Areas', Address_ShadingFac, shading))# Shading Factor
+        areasList.append( PHPP_XL_Obj('Areas', Address_Abs, abs))# Absorptivity
+        areasList.append( PHPP_XL_Obj('Areas', Address_Emmis, emmis))# Emmissivity
+        
+        # Add the PHPP UD Surface Name to the Surface Object
+        setattr(surface, 'UD_Srfc_Name', '{:d}-{}'.format(uID_Count, nm) )
+        
+        # Keep track of which Surfaces are included in the output
+        surfacesIncluded.append(nm)
+        
+        uID_Count += 1
+        areaCount += 1
     
     areasList.append( PHPP_XL_Obj('Areas', 'L19', 'Suspended Floor') )
     return areasList, surfacesIncluded
@@ -426,6 +394,9 @@ def build_windows(_inputBranch, _surfacesIncluded, _srfcBranch):
     for window in _inputBranch:
         # for each Window Surface Object in the model....
         # Get the window's basic params
+        # print '>>>', window
+        # import json
+        # print json.dumps(window.to_dict(), indent=4)
         quant = window.quantity
         nm = window.name
         w = window.width
@@ -435,7 +406,7 @@ def build_windows(_inputBranch, _surfacesIncluded, _srfcBranch):
         frameType = window.frame
         glassTypeUD = getattr(window, 'UD_glass_Name')
         frameTypeUD = getattr(window, 'UD_frame_Name')
-        variantType = getattr(window, 'Type_Variant', 'a')
+        variantType = getattr(window, 'variant_type', 'a')
         Inst_L, Inst_R, Inst_B, Inst_T = window.installs
         
         # See if the Window should be included in the output
@@ -522,25 +493,29 @@ def build_shading(_inputBranch, _surfacesIncluded):
         
     return shading_list
 
-def build_TFA( spaces_branch, _hb_room_names):
+def build_TFA( spaces_branch, _hb_room_names, _use_estimated, _model):
     tfa = []
-    
-    print("Trying to find any Honeybee Zone Room TFA info...")
-    try:
-        tfaSurfaceAreas = [ 0 ]
-        for space in spaces_branch:
-            if space.host_room_name not in _hb_room_names:
-                break
-            
-            roomTFA = space.space_tfa
-            tfaSurfaceAreas.append( roomTFA )
+    if _use_estimated:
+        print(r"Using estimated TFA (80% of the Honeybee Model Floor Area)")
+        estimated_tfa = float(_model.floor_area) * 0.75
+        tfa.append( PHPP_XL_Obj('Areas', 'V34', estimated_tfa, 'M2', 'FT2' ))
+    else:       
+        print("Trying to find any Honeybee Zone Room TFA info...")
+        try:
+            tfaSurfaceAreas = [ 0 ]
+            for space in spaces_branch:
+                if space.host_room_name not in _hb_room_names:
+                    break
+                
+                roomTFA = space.space_tfa
+                tfaSurfaceAreas.append( roomTFA )
 
-        tfaTotal = sum(tfaSurfaceAreas)
-        tfa.append( PHPP_XL_Obj('Areas', 'V34', tfaTotal, 'M2', 'FT2' )) # TFA (m2)
-    except Exception as e:
-        print(e)
-        print('Error getting TFA value from spaces?')
-    
+            tfaTotal = sum(tfaSurfaceAreas)
+            tfa.append( PHPP_XL_Obj('Areas', 'V34', tfaTotal, 'M2', 'FT2' )) # TFA (m2)
+        except Exception as e:
+            print(e)
+            print('Error getting TFA value from spaces?')
+        
     return tfa
 
 def build_addnl_vent_rooms(_inputBranch, _vent_systems, _zones, _startRows):
@@ -553,8 +528,12 @@ def build_addnl_vent_rooms(_inputBranch, _vent_systems, _zones, _startRows):
     i = 0
     
     for i, phpp_space in enumerate(_inputBranch):
+        
         # ----------------------------------------------------------------------
         # find the right ventilation system to use
+        if not _vent_systems:
+            continue
+        
         for s in _vent_systems:
             if phpp_space.phpp_vent_system_id == s.system_id:
                 vent_system = s
@@ -817,7 +796,7 @@ def build_addnl_vent_systems(_inputBranch, _ventUnitsUsed, _startRows):
 
     return vent
 
-def build_infiltration(_inputBranch, _zones_to_include):
+def build_infiltration(_hb_rooms, _zones_to_include):
     #---------------------------------------------------------------------------
     # Envelope Airtightness
     
@@ -832,17 +811,22 @@ def build_infiltration(_inputBranch, _zones_to_include):
     space_vn50s = []
     spaces_weighted_airflows = []
     
-    for phpp_space in _inputBranch:
+    for phpp_space in _hb_rooms:
         if phpp_space.ZoneName not in _zones_to_include:
             continue
         
-        spaces_weighted_airflows.append( phpp_space.n50 * phpp_space.vn50 )
-        space_vn50s.append( phpp_space.vn50 )
-    
+        if phpp_space.vn50:
+            spaces_weighted_airflows.append( phpp_space.n50 * phpp_space.vn50 )
+            space_vn50s.append( phpp_space.vn50 )
+
+        
     #---------------------------------------------------------------------------
     bld_vn50 = sum(space_vn50s)
-    bldg_weighted_ACH = sum(spaces_weighted_airflows) / bld_vn50
-    
+    if bld_vn50:
+        bldg_weighted_ACH = sum(spaces_weighted_airflows) / bld_vn50
+    else:
+        bldg_weighted_ACH = None
+
     #---------------------------------------------------------------------------
     airtightness = []
     print("Creating the Airtightness Objects...")
@@ -945,114 +929,6 @@ def build_ground(_ground_objs, _zones, _ghenv):
             ground.append(PHPP_XL_Obj('Ground', col2+'41', ground_obj.windFactor ))
             
     return ground
-
-def build_DHW_system(_dhw_systems, _hb_rooms):
-    #---------------------------------------------------------------------------
-    # If more that one system are to be used, combine them into a single system
-    
-    dhw_systems = {}
-    for system in _dhw_systems:
-        for room_id in system.rooms_assigned_to:
-            if room_id in _hb_rooms:
-                dhw_systems[system.id] = system 
-    
-    dhw_ = None
-    if len(dhw_systems.keys())>1:
-        dhw_ = combineDHWSystems( dhw_systems )
-    else:
-        dhw_ = dhw_systems.values()[0]
-    
-    #---------------------------------------------------------------------------
-    # DHW System Excel Objs
-    dhwSystem = []
-    if dhw_:
-        print("Creating the 'DHW' Objects...")
-        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J146', dhw_.forwardTemp, 'C', 'F'))
-        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P145', 0, 'C', 'F'))
-        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P29', 0, 'C', 'F'))
-        
-        #-----------------------------------------------------------------------
-        # Usage Volume
-        if dhw_.usage:
-            if dhw_.usage.type == 'Res':
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J47', dhw_.usage.demand_showers, 'LITER', 'GALLON' ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J48', dhw_.usage.demand_others, 'LITER', 'GALLON' ) )
-            elif dhw_.usage.type == 'NonRes':
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J47', '=Q57', 'LITER', 'GALLON' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J48', '=Q58', 'LITER', 'GALLON' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J58', getattr(dhw_.usage, 'use_daysPerYear') ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J62', 'x' if getattr(dhw_.usage, 'useShowers') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J63', 'x' if getattr(dhw_.usage, 'useHandWashing') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J64', 'x' if getattr(dhw_.usage, 'useWashStand') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J65', 'x' if getattr(dhw_.usage, 'useBidets') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J66', 'x' if getattr(dhw_.usage, 'useBathing') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J67', 'x' if getattr(dhw_.usage, 'useToothBrushing') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J68', 'x' if getattr(dhw_.usage, 'useCooking') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J74', 'x' if getattr(dhw_.usage, 'useDishwashing') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J75', 'x' if getattr(dhw_.usage, 'useCleanKitchen') != 'False' else '' ))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J76', 'x' if getattr(dhw_.usage, 'useCleanRooms') != 'False' else '' ))
-        
-        #-----------------------------------------------------------------------
-        # Recirc Piping
-        if len(dhw_.circulation_piping)>0:
-            dhwSystem.append( PHPP_XL_Obj('Aux Electricity', 'H29', 1 ) ) # Circulator Pump
-            
-        for colNum, recirc_line in enumerate(dhw_.circulation_piping.values()):
-            col = chr(ord('J') + colNum)
-            
-            if ord(col) <= ord('N'):
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 149), recirc_line.length , 'M', 'FT'))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 150), recirc_line.diameter, 'MM','IN') )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 151), recirc_line.insul_thickness, 'MM', 'IN' ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 152), recirc_line.insul_relfective ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 153), recirc_line.insul_lambda, 'W/MK', 'HR-FT2-F/BTU-IN' ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 155), recirc_line.quality ) )
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 159), recirc_line.period ) )
-            else:
-                dhwRecircWarning = "Too many recirculation loops. PHPP only allows up to 5 loops to be entered.\nConsolidate the loops before moving forward"
-                ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, dhwRecircWarning)
-        
-        #-----------------------------------------------------------------------
-        # Branch Piping
-        for colNum, branch_line in enumerate(dhw_.branch_piping.values()):
-            col = chr(ord('J') + colNum)
-            
-            if ord(col) <= ord('N'):
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 167), branch_line.diameter, 'M', 'IN'))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 168), branch_line.length, 'M', 'FT'))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 169), branch_line.tap_points))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 171), branch_line.tap_openings))
-                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 172), branch_line.utilisation))
-            else:
-                dhwRecircWarning = "Too many branch piping sets. PHPP only allows up to 5 sets to be entered.\nConsolidate the piping sets before moving forward"
-                ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, dhwRecircWarning)
-        
-        #-----------------------------------------------------------------------
-        # Tanks
-        if dhw_.tank1:
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J186', dhw_.tank1.type))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J189', 'x' if dhw_.tank1.solar==True else ''))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J191', dhw_.tank1.hl_rate, 'W/K', 'BTU/HR-F'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J192', dhw_.tank1.vol, 'LITER', 'GALLON'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J193', dhw_.tank1.stndbyFrac))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J195', dhw_.tank1.loction))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J198', dhw_.tank1.locaton_t, 'C', 'F'))
-        if dhw_.tank2:
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M186', dhw_.tank2.type) )
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M189', 'x' if dhw_.tank2.solar==True else ''))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M191', dhw_.tank2.hl_rate, 'W/K', 'BTU/HR-F'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M192', dhw_.tank2.vol, 'LITER', 'GALLON'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M193', dhw_.tank2.stndbyFrac))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M195', dhw_.tank2.loction))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M198', dhw_.tank2.locaton_t, 'C', 'F'))
-        if dhw_.tank_buffer:
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P186', dhw_.tank_buffer.type))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P191', dhw_.tank_buffer.hl_rate, 'W/K', 'BTU/HR-F'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P192', dhw_.tank_buffer.vol, 'LITER', 'GALLON'))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P195', dhw_.tank_buffer.loction))
-            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P198', dhw_.tank_buffer.locaton_t, 'C', 'F'))
-        
-    return dhwSystem
 
 def combine_DHW_systems(_dhwSystems):
     def getBranchPipeAttr(_dhwSystems, _attrName, _branchOrRecirc, _resultType):
@@ -1192,117 +1068,191 @@ def combine_DHW_systems(_dhwSystems):
     
     return combinedDHWSys
 
-def build_appliances(_appliance_collections, _hb_room_names, _ghenv):
-    
-    def appliances_in_room(_appliance_collections, _hb_room_names):
-        for hb_host_room_name in _appliance_collections.hb_host_room_ids:
-            for hb_room_name in _hb_room_names:
-                if hb_room_name == hb_host_room_name:
-                    return True
-        
-        return False
-
-    if not _appliance_collections:
+def build_DHW_system(_dhw_systems, _hb_rooms, _ghenv):
+    if not _dhw_systems:
         return []
     
-    print("Creating the 'Appliance' obejcts...")
-    apps = []
+    #---------------------------------------------------------------------------
+    # If more that one system are to be used, combine them into a single system
     
+    dhw_systems = {}
+    for system in _dhw_systems:
+        for room_id in system.rooms_assigned_to:
+            if room_id in _hb_rooms:
+                dhw_systems[system.id] = system 
+    
+    dhw_ = None
+    if len(dhw_systems.keys())>1:
+        dhw_ = combine_DHW_systems( dhw_systems )
+    else:
+        dhw_ = dhw_systems.values()[0]
+    
+    #---------------------------------------------------------------------------
+    # DHW System Excel Objs
+    dhwSystem = []
+    if dhw_:
+        print("Creating the 'DHW' Objects...")
+        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J146', dhw_.forwardTemp, 'C', 'F'))
+        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P145', 0, 'C', 'F'))
+        dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P29', 0, 'C', 'F'))
+        
+        #-----------------------------------------------------------------------
+        # Usage Volume
+        if dhw_.usage:
+            if dhw_.usage.type == 'Res':
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J47', dhw_.usage.demand_showers, 'LITER', 'GALLON' ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J48', dhw_.usage.demand_others, 'LITER', 'GALLON' ) )
+            elif dhw_.usage.type == 'NonRes':
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J47', '=Q57', 'LITER', 'GALLON' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J48', '=Q58', 'LITER', 'GALLON' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J58', getattr(dhw_.usage, 'use_daysPerYear') ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J62', 'x' if getattr(dhw_.usage, 'useShowers') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J63', 'x' if getattr(dhw_.usage, 'useHandWashing') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J64', 'x' if getattr(dhw_.usage, 'useWashStand') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J65', 'x' if getattr(dhw_.usage, 'useBidets') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J66', 'x' if getattr(dhw_.usage, 'useBathing') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J67', 'x' if getattr(dhw_.usage, 'useToothBrushing') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J68', 'x' if getattr(dhw_.usage, 'useCooking') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J74', 'x' if getattr(dhw_.usage, 'useDishwashing') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J75', 'x' if getattr(dhw_.usage, 'useCleanKitchen') != 'False' else '' ))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J76', 'x' if getattr(dhw_.usage, 'useCleanRooms') != 'False' else '' ))
+        
+        #-----------------------------------------------------------------------
+        # Recirc Piping
+        if len(dhw_.circulation_piping)>0:
+            dhwSystem.append( PHPP_XL_Obj('Aux Electricity', 'H29', 1 ) ) # Circulator Pump
+            
+        for colNum, recirc_line in enumerate(dhw_.circulation_piping.values()):
+            col = chr(ord('J') + colNum)
+            
+            if ord(col) <= ord('N'):
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 149), recirc_line.length , 'M', 'FT'))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 150), recirc_line.diameter, 'MM','IN') )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 151), recirc_line.insul_thickness, 'MM', 'IN' ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 152), recirc_line.insul_relfective ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 153), recirc_line.insul_lambda, 'W/MK', 'HR-FT2-F/BTU-IN' ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 155), recirc_line.quality ) )
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 159), recirc_line.period ) )
+            else:
+                dhwRecircWarning = "Too many recirculation loops. PHPP only allows up to 5 loops to be entered.\nConsolidate the loops before moving forward"
+                _ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, dhwRecircWarning)
+        
+        #-----------------------------------------------------------------------
+        # Branch Piping
+        for colNum, branch_line in enumerate(dhw_.branch_piping.values()):
+            col = chr(ord('J') + colNum)
+            
+            if ord(col) <= ord('N'):
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 167), branch_line.diameter, 'M', 'IN'))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 168), branch_line.length, 'M', 'FT'))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 169), branch_line.tap_points))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 171), branch_line.tap_openings))
+                dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', '{}{}'.format(col, 172), branch_line.utilisation))
+            else:
+                dhwRecircWarning = "Too many branch piping sets. PHPP only allows up to 5 sets to be entered.\nConsolidate the piping sets before moving forward"
+                _ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, dhwRecircWarning)
+        
+        #-----------------------------------------------------------------------
+        # Tanks
+        if dhw_.tank1:
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J186', dhw_.tank1.type))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J189', 'x' if dhw_.tank1.solar==True else ''))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J191', dhw_.tank1.hl_rate, 'W/K', 'BTU/HR-F'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J192', dhw_.tank1.vol, 'LITER', 'GALLON'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J193', dhw_.tank1.stndbyFrac))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J195', dhw_.tank1.location))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'J198', dhw_.tank1.location_t, 'C', 'F'))
+        if dhw_.tank2:
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M186', dhw_.tank2.type) )
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M189', 'x' if dhw_.tank2.solar==True else ''))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M191', dhw_.tank2.hl_rate, 'W/K', 'BTU/HR-F'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M192', dhw_.tank2.vol, 'LITER', 'GALLON'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M193', dhw_.tank2.stndbyFrac))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M195', dhw_.tank2.location))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'M198', dhw_.tank2.location_t, 'C', 'F'))
+        if dhw_.tank_buffer:
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P186', dhw_.tank_buffer.type))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P191', dhw_.tank_buffer.hl_rate, 'W/K', 'BTU/HR-F'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P192', dhw_.tank_buffer.vol, 'LITER', 'GALLON'))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P195', dhw_.tank_buffer.location))
+            dhwSystem.append( PHPP_XL_Obj('DHW+Distribution', 'P198', dhw_.tank_buffer.location_t, 'C', 'F'))
+        
+    return dhwSystem
+
+def build_appliances(_appliances, _hb_room_names, _ghenv):
+    print("Creating the 'Appliance' objects...")
+    
+    # Setup
+    #---------------------------------------------------------------------------
+    if not _appliances: return []
+    apps = []
+    other_count = 0
+
     # First, turn all the appliances 'off'
     useRows = [14, 16, 18, 21, 22, 23, 24, 31, 32, 33]
     for rowNum in useRows:
         apps.append( PHPP_XL_Obj('Electricity', 'F{}'.format(rowNum), 0) )
     
     #---------------------------------------------------------------------------
-    # Basic Appliances
-    for appliance_collection in _appliance_collections:
-        
-        if not appliances_in_room(appliance_collection, _hb_room_names):
-            continue
-        
-        for appliance in appliance_collection.appliance_list:
-            if 'dishwasher' in appliance.name:
+    for appliance in _appliances:
+        if 'dishwasher' in appliance.name:
+            if appliance.nominal_demand:
                 apps.append( PHPP_XL_Obj('Electricity', 'F14', 1) )
                 apps.append( PHPP_XL_Obj('Electricity', 'H14', 1) )
                 apps.append( PHPP_XL_Obj('Electricity', 'J14', appliance.nominal_demand) )
                 apps.append( PHPP_XL_Obj('Electricity', 'D15', appliance.type) )
-            elif 'clothesWasher' in appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F16', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'H16', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'J16', appliance.nominal_demand) )
-                apps.append( PHPP_XL_Obj('Electricity', 'N16', appliance.utilization_factor) )
-                apps.append( PHPP_XL_Obj('Electricity', 'D17', appliance.type) )
-            elif 'clothesDryer' in appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F18', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'H18', 1) )
-                if 'GAS' in appliance.type.upper():
-                    apps.append( PHPP_XL_Obj('Electricity', 'J19', appliance.nominal_demand) )
-                else:
-                    apps.append( PHPP_XL_Obj('Electricity', 'J18', appliance.nominal_demand) )
-                apps.append( PHPP_XL_Obj('Electricity', 'D19', appliance.type) )
-                apps.append( PHPP_XL_Obj('Electricity', 'L19', 0.60) )
-            elif 'fridge' == appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F21', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'H21', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'J21', appliance.nominal_demand) )
-            elif 'freezer' == appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F22', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'H22', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'J22', appliance.nominal_demand) )
-            elif 'fridgeFreezer' == appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F23', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'H23', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'J23', appliance.nominal_demand) )
-            elif 'cooking' in appliance.name:
-                apps.append( PHPP_XL_Obj('Electricity', 'F24', 1) )
-                apps.append( PHPP_XL_Obj('Electricity', 'J24', appliance.nominal_demand) )
-                apps.append( PHPP_XL_Obj('Electricity', 'D25', appliance.type) )
-    
-    #---------------------------------------------------------------------------
-    # Harder Appliances
-    #
-    # For consumer elec, figure out the floor area normalized avg value for all HB_rooms
-    #
-    consumer_elec = []
-    hb_room_tfa = []
-    for collection in _appliance_collections:
-        for appliance in collection:
-            if appliance.name == 'consumerElec':
-                consumer_elec.append( appliance )
-                hb_room_tfa.append( collection.host_room_tfa )
-                break
-    
-    if hb_room_tfa:
-        totalCExFA = sum( (a.nominal_demand * tfa) for a, tfa in zip(consumer_elec, hb_room_tfa) )
-        area_weighted_consumer_elec = (totalCExFA / sum(hb_room_tfa))
-        apps.append( PHPP_XL_Obj('Electricity', 'J27', area_weighted_consumer_elec ) )
-
-    #
-    # For 'other' user-determined type elec equip / appliances, take only the first three
-    #
-    others = []
-    for collection in _appliance_collections:
-        for appliance in collection:
-            if 'ud__' in appliance.name:
-                others.append( appliance )
-    
-    if len(others)>3:
-        msg = 'It looks like you have more than 3 "Other" Electric Equipment elements\n'\
-        'that you are trying to add. PHPP "Electricity" worksheet only allows 3 though.\n'\
-        'For now I will just take the first three. Try and consolidate your equipment.'
-        _ghenv.Component.AddRuntimeMessage(ghK.GH_RuntimeMessageLevel.Warning, msg)
-    
-    others = others[0:3]
-    for i, each in enumerate(others):
-        apps.append( PHPP_XL_Obj('Electricity', 'D{}'.format(i+31), each.name) )
-        apps.append( PHPP_XL_Obj('Electricity', 'F{}'.format(i+31), 1) )
-        apps.append( PHPP_XL_Obj('Electricity', 'H{}'.format(i+31), 1) )
-        apps.append( PHPP_XL_Obj('Electricity', 'J{}'.format(i+31), each.nominal_demand) )
+            else:
+                apps.append( PHPP_XL_Obj('Electricity', 'F14', 1) )
+                apps.append( PHPP_XL_Obj('Electricity', 'H14', 1) )
+                apps.append( PHPP_XL_Obj('Electricity', 'J14', appliance.nominal_demand) )
+                apps.append( PHPP_XL_Obj('Electricity', 'D15', appliance.type) )
+        elif 'clothesWasher' in appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F16', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H16', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J16', appliance.nominal_demand) )
+            apps.append( PHPP_XL_Obj('Electricity', 'N16', appliance.utilization_factor) )
+            apps.append( PHPP_XL_Obj('Electricity', 'D17', appliance.type) )
+        elif 'clothesDryer' in appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F18', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H18', 1) )
+            if 'GAS' in appliance.type.upper():
+                apps.append( PHPP_XL_Obj('Electricity', 'J19', appliance.nominal_demand) )
+            else:
+                apps.append( PHPP_XL_Obj('Electricity', 'J18', appliance.nominal_demand) )
+            apps.append( PHPP_XL_Obj('Electricity', 'D19', appliance.type) )
+            apps.append( PHPP_XL_Obj('Electricity', 'L19', 0.60) )
+        elif 'fridge' == appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F21', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H21', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J21', appliance.nominal_demand) )
+        elif 'freezer' == appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F22', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H22', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J22', appliance.nominal_demand) )
+        elif 'fridgeFreezer' == appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F23', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H23', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J23', appliance.nominal_demand) )
+        elif 'cooking' in appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'F24', 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J24', appliance.nominal_demand) )
+            apps.append( PHPP_XL_Obj('Electricity', 'D25', appliance.type) )
+        elif 'consumerElec' in appliance.name:
+            apps.append( PHPP_XL_Obj('Electricity', 'J27', appliance.nominal_demand) )
+        else:
+            # Other
+            apps.append( PHPP_XL_Obj('Electricity', 'D{}'.format(other_count+31), appliance.name) )
+            apps.append( PHPP_XL_Obj('Electricity', 'F{}'.format(other_count+31), 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'H{}'.format(other_count+31), 1) )
+            apps.append( PHPP_XL_Obj('Electricity', 'J{}'.format(other_count+31), appliance.nominal_demand) )
+            other_count +=1
     
     return apps
 
 def build_lighting(_lighting_objects, _hb_room_names):
-
+    if not _lighting_objects:
+        return []
+        
     weighted_efficacy = []
     tfas = []
     for obj in _lighting_objects:
@@ -1373,16 +1323,15 @@ def build_location( _locationObjs ):
 
 def build_footprint(_fps):
     print('Creating the Building Footprint Object...')
-    
-    fp_area = 0
-    try:
-        for footprint in _fps:
-            fp_area += footprint.Footprint_area
 
-        fpObj = PHPP_XL_Obj('Areas', 'V33', fp_area)
-    except:
-        fpObj = PHPP_XL_Obj('Areas', 'V33', fp_area)
-    
+    fp_area = 0
+
+    try:
+        fp_area = _fps.Footprint_area
+    except Exception as e:
+        print(e)
+
+    fpObj = PHPP_XL_Obj('Areas', 'V33', fp_area)
     return [ fpObj ]
 
 def build_thermal_bridges(_tb_objects, _start_rows):
@@ -1419,7 +1368,6 @@ def build_settings( _settings_objs ):
 
     verification = []
     if settings_obj:
-        verification.append( PHPP_XL_Obj('Verification', 'F28', settings_obj.num_res_units))
         verification.append( PHPP_XL_Obj('Verification', 'K29', settings_obj.spec_capacity, 'WH/KM2', 'BTU/FT2' ))
         verification.append( PHPP_XL_Obj('Verification', 'K4', settings_obj.bldg_name ))
         verification.append( PHPP_XL_Obj('Verification', 'M7', settings_obj.bldg_country ))
@@ -1431,12 +1379,6 @@ def build_settings( _settings_objs ):
         verification.append( PHPP_XL_Obj('Verification', 'R85', settings_obj.enerPHit ))
         verification.append( PHPP_XL_Obj('Verification', 'R87', settings_obj.retrofit ))
         
-        # IHG and Occupancy
-        verification.append( PHPP_XL_Obj('Verification', 'R20', settings_obj.building_type))
-        verification.append( PHPP_XL_Obj('Verification', 'R24', settings_obj.ihg_type))
-        verification.append( PHPP_XL_Obj('Verification', 'R25', settings_obj.ihg_values))
-        verification.append( PHPP_XL_Obj('Verification', 'Q29', settings_obj.occupancy ))
-        verification.append( PHPP_XL_Obj('Verification', 'R29', settings_obj.occupancy_method ))
 
     return verification
 
@@ -1546,7 +1488,7 @@ def build_heating_cooling( _heating_cooling_objs, _hb_room_names ):
                 hc_equip.append( PHPP_XL_Obj('HP', 'N{}'.format(i+670), item)) 
             hc_equip.append( PHPP_XL_Obj('HP', 'M688', dhw_hp.sink_dt)) 
         
-        hc_equip.append( PHPP_XL_Obj('HP', 'M18', 2 if hp_count==2 else 1)) # Can't ever be zero
+        hc_equip.append( PHPP_XL_Obj('HP', 'M18', 2 if hp_count>1 else 1)) # Can't ever be zero
 
         #-----------------------------------------------------------------------
         supply_air_cooling = params.get('supply_air_cooling', None)
@@ -1581,10 +1523,11 @@ def build_heating_cooling( _heating_cooling_objs, _hb_room_names ):
 
         #-----------------------------------------------------------------------
 
-
     return hc_equip
 
-def build_PER( _per_objs, _hb_room_names ):
+def build_PER( _per_objs, _hb_room_names, _ghenv ):
+    if not _per_objs:
+        return []
 
     #---------------------------------------------------------------------------
     #  Need to combine PER together somehow. Use a floor-area weighted average?
@@ -1594,8 +1537,10 @@ def build_PER( _per_objs, _hb_room_names ):
     fa_X_dhw_fac = 0
     primary_heat = '5-Direct electricity'
     secondary_heat = '-'
+    mech_cooling = set()
 
     for k, per_obj in _per_objs.items():
+        
         if k not in _hb_room_names:
             continue
         
@@ -1603,6 +1548,7 @@ def build_PER( _per_objs, _hb_room_names ):
         total_floor_area += room_floor_area
         fa_X_primary_fac += room_floor_area * per_obj.get('primary_heat_frac', 0)
         fa_X_dhw_fac += room_floor_area * per_obj.get('dhw_frac', 0)
+        mech_cooling.add( per_obj.get('mech_cooling', None) )
 
         if per_obj.get('primary_heat'):
             primary_heat = per_obj.get('primary_heat')
@@ -1619,6 +1565,88 @@ def build_PER( _per_objs, _hb_room_names ):
     per_.append( PHPP_XL_Obj('PER', 'P12', secondary_heat)) 
     per_.append( PHPP_XL_Obj('PER', 'S10', primary_fraction))
     per_.append( PHPP_XL_Obj('PER', 'T10', secondary_fraction ))
-
+    
+    #---------------------------------------------------------------------------
+    # Mech Cooling
+    if len(list(mech_cooling)) == 1:
+        mech_cooling = list(mech_cooling)[0]
+        per_.append( PHPP_XL_Obj('Verification', 'N29', mech_cooling )) 
+    else:
+        msg = 'Error: Multiple "Mech Cooling" values found? Check the Heating/Cooling'\
+            'settings? Mech Cooling is either on or off for the whole model.'
+        _ghenv.Component.AddRuntimeMessage( ghK.GH_RuntimeMessageLevel.Warning, msg )
+    
     return per_
 
+def build_occupancy( _occ_obj ):
+    if not _occ_obj:
+        return []
+    
+    occupancy = []
+
+    occupancy.append( PHPP_XL_Obj('Verification', 'F28', _occ_obj.num_units))
+    occupancy.append( PHPP_XL_Obj('Verification', 'R20', _occ_obj.building_type))
+    occupancy.append( PHPP_XL_Obj('Verification', 'R24', _occ_obj.ihg_type))
+    occupancy.append( PHPP_XL_Obj('Verification', 'R25', _occ_obj.ihg_values))
+    occupancy.append( PHPP_XL_Obj('Verification', 'Q29', _occ_obj.occupancy ))
+    occupancy.append( PHPP_XL_Obj('Verification', 'R29', _occ_obj.occupancy_method ))
+    
+    return occupancy
+
+def build_variants( _var_obj ):
+    variants = []
+
+    if not _var_obj:
+        return variants
+
+    if _var_obj.windows:
+        for i in range(24, 175):
+            variants.append( PHPP_XL_Obj('Windows', 'T{}'.format(i), '=G{}'.format(i) ))
+            variants.append( PHPP_XL_Obj('Windows', 'U{}'.format(i), '=H{}'.format(i) ))
+    
+    if _var_obj.u_values:
+        for i in range(0, 15):
+            row_Uval = 17+i*21
+            row_Variant = 410+i*2
+            row_Compo = 15+i
+            
+            variants.append( PHPP_XL_Obj('U-Values', 'M'+str(row_Uval), '=F'+str(row_Uval) ))
+            variants.append( PHPP_XL_Obj('U-Values', 'S'+str(row_Uval), '=G'+str(row_Uval) ))
+            variants.append( PHPP_XL_Obj('Variants', 'B'+str(row_Variant), '=Components!D'+str(row_Compo) ))
+
+    if _var_obj.airtightness:
+        variants.append( PHPP_XL_Obj('Ventilation', 'N27', '=D27' ))
+
+    if _var_obj.thermal_bridges:
+        variants.append( PHPP_XL_Obj('Areas', 'P145', '=Variants!D933' ))
+        variants.append( PHPP_XL_Obj('Areas', 'R145', 1))    
+
+    if _var_obj.certification:
+        variants.append( PHPP_XL_Obj('Verification', 'R78', '=Variants!D927' ))
+        variants.append( PHPP_XL_Obj('Verification', 'R80', '=Variants!D928' ))
+        variants.append( PHPP_XL_Obj('Verification', 'R82', '=Variants!D929' ))
+        variants.append( PHPP_XL_Obj('Verification', 'R85', '=Variants!D930' ))
+        variants.append( PHPP_XL_Obj('Verification', 'R87', '=Variants!D931' ))
+
+    if _var_obj.primary_energy:
+        variants.append( PHPP_XL_Obj('PER', 'P10', '=H10' ))
+        variants.append( PHPP_XL_Obj('PER', 'P12', '=H12' ))
+        variants.append( PHPP_XL_Obj('PER', 'S10', '=I10' ))
+        variants.append( PHPP_XL_Obj('PER', 'T10', '=J10' ))
+    
+    if _var_obj.default_ventilation:
+        variants.append( PHPP_XL_Obj('Ventilation', 'L12', '=D12' ))
+        variants.append( PHPP_XL_Obj('Additional Vent', 'F97', '=Variants!D856' ))
+        variants.append( PHPP_XL_Obj('Additional Vent', 'H127', '=Variants!D858' ))
+        variants.append( PHPP_XL_Obj('Additional Vent', 'H128', '=Variants!D858' ))
+        variants.append( PHPP_XL_Obj('Additional Vent', 'L127', '=Variants!D857' ))
+        variants.append( PHPP_XL_Obj('Additional Vent', 'L128', '=Variants!D857' ))
+    elif _var_obj.custom_ventlilation:
+        variants.append( PHPP_XL_Obj('Ventilation', 'L12', '=D12' ))        
+        for item in _var_obj.get_custom_rows():
+            variants.append( PHPP_XL_Obj( item.worksheet, item.range, item.reference) )
+
+    return variants
+
+def build_ud_custom( _custom_objs ):
+    return [ PHPP_XL_Obj(obj.worksheet, obj.range, obj.value ) for obj in _custom_objs ]
